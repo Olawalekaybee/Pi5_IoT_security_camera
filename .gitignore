@@ -1,0 +1,53 @@
+# Environment & secrets
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+env/
+
+# Model weights (download at runtime)
+models/*.pt
+models/*.onnx
+models/*.tflite
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# VSCode
+.vscode/
+*.code-workspace
+
+# Snapshots
+snapshots/
+*.jpg
+*.jpeg
+*.png
+!docs/images/*.png
+!docs/images/*.jpg
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Pip cache
+pip-cache/
+tmp/
+
+# credentials
+keep.txt
