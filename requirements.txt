@@ -1,0 +1,23 @@
+# Edge AI Security Monitor — Python dependencies
+# Install: pip install -r requirements.txt
+
+# Core vision
+opencv-python>=4.9.0
+numpy>=1.26.0
+
+# Web dashboard
+flask>=3.0.0
+
+# Telegram alerts
+requests>=2.31.0
+
+# Config
+pyyaml>=6.0.1
+
+# Testing
+pytest>=8.0.0
+pytest-cov>=5.0.0
+
+# Hailo SDK — installed separately from Hailo Developer Zone
+# https://hailo.ai/developer-zone/
+# hailo_platform  (not on PyPI — install via Hailo's .whl)

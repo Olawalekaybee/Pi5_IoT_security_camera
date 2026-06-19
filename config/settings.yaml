@@ -1,0 +1,41 @@
+# Edge AI Security Monitor — default configuration
+# Copy this to settings.yaml and fill in your values
+
+models:
+  detection_hef: models/yolov8n.hef
+  reid_hef: models/resnet50_reid.hef
+
+database:
+  path: data/events.db
+
+telegram:
+  bot_token: "YOUR_BOT_TOKEN_HERE"
+  chat_id: "YOUR_CHAT_ID_HERE"
+  cooldown_seconds: 30
+
+reid:
+  similarity_threshold: 0.75
+  alert_threshold: 0.60
+  embedding_cache_size: 100
+
+zones:
+  restricted:
+    - zone_a
+    - zone_b
+  polygons:
+    zone_a: [[0, 0], [320, 0], [320, 480], [0, 480]]       # Left half
+    zone_b: [[320, 0], [640, 0], [640, 480], [320, 480]]   # Right half
+
+dashboard:
+  port: 5000
+  host: "0.0.0.0"
+  max_events_page: 50
+
+detection:
+  confidence_threshold: 0.5
+  nms_threshold: 0.4
+  input_width: 640
+  input_height: 640
+  target_fps: 30
+
+known_faces_dir: data/known_faces

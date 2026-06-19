@@ -1,0 +1,37 @@
+version: "3.9"
+
+# Edge AI Security Monitor — Docker Compose
+# Run: docker compose up
+
+services:
+  monitor:
+    build: .
+    image: edge-ai-security-monitor:latest
+    container_name: edge-ai-monitor
+    restart: unless-stopped
+
+    # Expose dashboard
+    ports:
+      - "5000:5000"
+
+    # Mount Hailo PCIe device + camera
+    devices:
+      - /dev/hailo0:/dev/hailo0     # Hailo-8L NPU
+      - /dev/video0:/dev/video0     # Pi Camera Module 3
+
+    volumes:
+      - ./data:/app/data            # SQLite DB + saved crops
+      - ./logs:/app/logs
+      - ./models:/app/models        # .hef model files
+      - ./config:/app/config        # settings.yaml
+
+    environment:
+      - LOG_LEVEL=INFO
+
+    # Hailo HAT needs elevated privileges for PCIe DMA
+    privileged: true
+
+    command: >
+      python main.py
+        --config /app/config/settings.yaml
+        --camera 0

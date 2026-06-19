@@ -1,0 +1,16 @@
+[Unit]
+Description=Edge AI Security Monitor (Hailo NPU)
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/edge-ai-security-monitor
+ExecStart=/usr/bin/python3 /home/pi/edge-ai-security-monitor/main.py --config config/settings.yaml
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/home/pi/edge-ai-security-monitor/logs/systemd.log
+StandardError=append:/home/pi/edge-ai-security-monitor/logs/systemd.log
+
+[Install]
+WantedBy=multi-user.target

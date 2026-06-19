@@ -1,0 +1,30 @@
+# /etc/systemd/system/edge-ai-monitor.service
+# Installs the monitor as a systemd service that auto-starts on boot.
+#
+# Install:
+#   sudo cp scripts/edge-ai-monitor.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable edge-ai-monitor
+#   sudo systemctl start edge-ai-monitor
+#
+# Logs:
+#   sudo journalctl -u edge-ai-monitor -f
+
+[Unit]
+Description=Edge AI Security Monitor (Pi5 + Hailo)
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/edge-ai-security-monitor
+ExecStart=/usr/bin/python3 main.py --config config/settings.yaml
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
