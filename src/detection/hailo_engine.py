@@ -70,6 +70,7 @@ class HailoInferenceEngine:
         self._network_group = None
         self._infer_pipeline = None
         self._activation_context = None
+        self._last_frame_shape = None
 
         if self.mock_mode:
             logger.info(f"[MOCK] HailoInferenceEngine ready (model: {hef_path})")
@@ -94,6 +95,7 @@ class HailoInferenceEngine:
 
     def infer(self, frame: np.ndarray) -> np.ndarray:
         """Run one inference pass. Returns raw model output tensor."""
+        self._last_frame_shape = frame.shape[:2]  # (height, width) for coordinate scaling
         if self.mock_mode:
             return self._mock_infer(frame)
         return self._hailo_infer(frame)
@@ -148,6 +150,14 @@ class HailoInferenceEngine:
         # may already be squeezed depending on HailoRT version.
         per_class = raw[0] if len(raw) == 1 and hasattr(raw[0], "__len__") and not isinstance(raw[0], (int, float)) else raw
 
+        # BUG FIX: normalized coords must be scaled by the ORIGINAL
+        # frame's height/width, not the model's fixed square input size
+        # (e.g. 640x640). Using input_shape here silently produced
+        # out-of-bounds boxes whenever the source frame wasn't square
+        # (a 640x480 camera frame got y-coordinates scaled as if the
+        # frame were 640 tall, overflowing past the real 480px height).
+        frame_h, frame_w = getattr(self, "_last_frame_shape", (self.input_shape[1], self.input_shape[0]))
+
         for class_id, class_dets in enumerate(per_class):
             if class_dets is None or len(class_dets) == 0:
                 continue
@@ -156,8 +166,8 @@ class HailoInferenceEngine:
                     continue
                 y1, x1, y2, x2, score = det[:5]
                 detections.append((
-                    x1 * self.input_shape[0], y1 * self.input_shape[1],
-                    x2 * self.input_shape[0], y2 * self.input_shape[1],
+                    x1 * frame_w, y1 * frame_h,
+                    x2 * frame_w, y2 * frame_h,
                     score, class_id,
                 ))
 
