@@ -118,7 +118,23 @@ class HailoInferenceEngine:
         input_data = {self._input_vstream_info.name: np.expand_dims(resized, axis=0)}
         results = self._infer_pipeline.infer(input_data)
         raw = results[self._output_vstream_info.name]
-        return self._parse_nms_output(raw)
+
+        # Detection models (e.g. YOLOv8) use on-chip NMS-by-class output;
+        # embedding models (e.g. OSNet Re-ID) output a flat feature
+        # vector. Branch on the vstream's declared format rather than
+        # assuming every model on this engine is a detector.
+        if self._is_nms_output():
+            return self._parse_nms_output(raw)
+        return np.asarray(raw).flatten()
+
+    def _is_nms_output(self) -> bool:
+        """True if this HEF's output vstream is a Hailo NMS-by-class op
+        (detection models), False for plain feature-vector outputs
+        (embedding/Re-ID models)."""
+        info = self._output_vstream_info
+        format_type = getattr(getattr(info, "format", None), "order", None)
+        type_name = str(format_type) if format_type is not None else ""
+        return "NMS" in type_name or "nms" in self.hef_path.lower() and "yolo" in self.hef_path.lower()
 
     def _parse_nms_output(self, raw) -> np.ndarray:
         """

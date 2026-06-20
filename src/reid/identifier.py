@@ -52,9 +52,17 @@ class PersonIdentifier:
             json.dump(data, f)
 
     def _embed(self, crop: np.ndarray) -> np.ndarray:
-        """Run the Re-ID model on a person crop to get a feature embedding."""
+        """
+        Run the Re-ID model on a person crop to get a feature embedding.
+        The real osnet_x1_0 HEF outputs a 512-dim UINT8 vector (vstream
+        'fc49'). Cosine similarity is scale-invariant, so the raw 0-255
+        UINT8 range doesn't need rescaling before normalizing to unit
+        length below.
+        """
+        EMBED_DIM = 512
+
         if crop is None or crop.size == 0:
-            return np.zeros(256)
+            return np.zeros(EMBED_DIM)
 
         if self.engine.mock_mode:
             # In mock mode, derive a deterministic embedding from pixel
@@ -69,14 +77,18 @@ class PersonIdentifier:
                 crop.shape[0], crop.shape[1],
             ])
             rng = np.random.default_rng(seed=int(abs(stats.sum())) % (2**32))
-            noise = rng.standard_normal(250) * 0.0  # deterministic, no real noise
+            noise = rng.standard_normal(EMBED_DIM - len(stats)) * 0.0
             vec = np.concatenate([stats, noise])
-            vec = np.resize(vec, 256)
+            vec = np.resize(vec, EMBED_DIM)
         else:
             raw = self.engine.infer(crop)
-            if raw.ndim > 1:
-                raw = raw.flatten()
-            vec = np.resize(raw, 256)
+            vec = np.asarray(raw, dtype=np.float64).flatten()
+            if vec.size != EMBED_DIM:
+                logger.warning(
+                    f"Re-ID embedding size {vec.size} != expected {EMBED_DIM} "
+                    "— check the HEF output vstream shape"
+                )
+                vec = np.resize(vec, EMBED_DIM)
 
         return vec / (np.linalg.norm(vec) + 1e-12)
 
