@@ -69,6 +69,7 @@ class HailoInferenceEngine:
         self._device = None
         self._network_group = None
         self._infer_pipeline = None
+        self._activation_context = None
 
         if self.mock_mode:
             logger.info(f"[MOCK] HailoInferenceEngine ready (model: {hef_path})")
@@ -101,8 +102,13 @@ class HailoInferenceEngine:
         resized = self._preprocess(frame)
 
         if self._infer_pipeline is None:
-            # Building InferVStreams per-frame is expensive and was a
-            # latency bug — build it once and reuse across calls.
+            # The network group must be explicitly activated before any
+            # vstream can be written to — configure() alone only defines
+            # it. We keep the activation context alive for the engine's
+            # lifetime alongside the cached InferVStreams pipeline.
+            self._activation_context = self._network_group.activate()
+            self._activation_context.__enter__()
+
             self._infer_pipeline = hpf.InferVStreams(
                 self._network_group,
                 hpf.InputVStreamParams.make(self._network_group),
@@ -181,6 +187,11 @@ class HailoInferenceEngine:
         if self._infer_pipeline is not None:
             try:
                 self._infer_pipeline.__exit__(None, None, None)
+            except Exception:
+                pass
+        if self._activation_context is not None:
+            try:
+                self._activation_context.__exit__(None, None, None)
             except Exception:
                 pass
         if self._network_group is not None:
