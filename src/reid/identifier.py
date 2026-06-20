@@ -92,9 +92,21 @@ class PersonIdentifier:
 
         return vec / (np.linalg.norm(vec) + 1e-12)
 
-    def enroll(self, name: str, crop: np.ndarray) -> None:
-        """Add a new known person to the gallery."""
+    def enroll(self, name: str, crop: np.ndarray, average_with_existing: bool = False) -> None:
+        """
+        Add a new known person to the gallery, or refine an existing
+        entry. A single enrollment photo is sensitive to that exact
+        pose/lighting/distance — call this multiple times with
+        average_with_existing=True across a few different photos of
+        the same person to build a more stable reference embedding.
+        """
         embedding = self._embed(crop)
+
+        if average_with_existing and name in self.gallery:
+            existing = self.gallery[name]
+            combined = existing + embedding
+            embedding = combined / (np.linalg.norm(combined) + 1e-12)
+
         self.gallery[name] = embedding
         self._save_gallery()
         logger.info(f"Enrolled '{name}' into known-persons gallery")
