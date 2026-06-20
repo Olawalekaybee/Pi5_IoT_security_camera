@@ -24,6 +24,35 @@ except ImportError:
     )
 
 
+_shared_vdevice = None
+
+
+def _get_shared_vdevice():
+    """
+    A physical Hailo-8L exposes exactly one device. Both the detection
+    model and the Re-ID model need to run on it, so we open the VDevice
+    once and configure multiple network groups (one per .hef) on it,
+    instead of each engine opening its own VDevice (which fails with
+    HAILO_OUT_OF_PHYSICAL_DEVICES on the second call).
+    """
+    global _shared_vdevice
+    if _shared_vdevice is None:
+        _shared_vdevice = hpf.VDevice()
+        logger.info("Opened shared Hailo VDevice")
+    return _shared_vdevice
+
+
+def release_shared_vdevice() -> None:
+    """Call once at process shutdown, after all engines are closed."""
+    global _shared_vdevice
+    if _shared_vdevice is not None:
+        try:
+            _shared_vdevice.release()
+        except Exception:
+            pass
+        _shared_vdevice = None
+
+
 class HailoInferenceEngine:
     """
     Loads a compiled .hef model onto the Hailo-8L NPU and exposes a
@@ -39,6 +68,7 @@ class HailoInferenceEngine:
         self.mock_mode = not HAILO_AVAILABLE
         self._device = None
         self._network_group = None
+        self._infer_pipeline = None
 
         if self.mock_mode:
             logger.info(f"[MOCK] HailoInferenceEngine ready (model: {hef_path})")
@@ -46,9 +76,9 @@ class HailoInferenceEngine:
             self._load_hailo_model()
 
     def _load_hailo_model(self) -> None:
-        """Load .hef onto the NPU via HailoRT VDevice."""
+        """Load .hef onto the shared NPU device as its own network group."""
         try:
-            self._device = hpf.VDevice()
+            self._device = _get_shared_vdevice()
             hef = hpf.HEF(self.hef_path)
             configure_params = hpf.ConfigureParams.create_from_hef(
                 hef, interface=hpf.HailoStreamInterface.PCIe
@@ -69,19 +99,59 @@ class HailoInferenceEngine:
 
     def _hailo_infer(self, frame: np.ndarray) -> np.ndarray:
         resized = self._preprocess(frame)
-        with hpf.InferVStreams(
-            self._network_group,
-            hpf.InputVStreamParams.make(self._network_group),
-            hpf.OutputVStreamParams.make(self._network_group),
-        ) as pipeline:
-            input_data = {self._input_vstream_info.name: np.expand_dims(resized, axis=0)}
-            results = pipeline.infer(input_data)
-            return results[self._output_vstream_info.name][0]
+
+        if self._infer_pipeline is None:
+            # Building InferVStreams per-frame is expensive and was a
+            # latency bug — build it once and reuse across calls.
+            self._infer_pipeline = hpf.InferVStreams(
+                self._network_group,
+                hpf.InputVStreamParams.make(self._network_group),
+                hpf.OutputVStreamParams.make(self._network_group),
+            ).__enter__()
+
+        input_data = {self._input_vstream_info.name: np.expand_dims(resized, axis=0)}
+        results = self._infer_pipeline.infer(input_data)
+        raw = results[self._output_vstream_info.name]
+        return self._parse_nms_output(raw)
+
+    def _parse_nms_output(self, raw) -> np.ndarray:
+        """
+        This HEF's output op is 'HAILO NMS BY CLASS': HailoRT returns a
+        per-class list of arrays, each row [y1, x1, y2, x2, score] in
+        normalized 0-1 coordinates. We flatten this into the pipeline's
+        expected [x1, y1, x2, y2, conf, class_id] pixel-space format.
+        """
+        detections = []
+        # raw is typically a list/array indexed by class id; batch dim
+        # may already be squeezed depending on HailoRT version.
+        per_class = raw[0] if len(raw) == 1 and hasattr(raw[0], "__len__") and not isinstance(raw[0], (int, float)) else raw
+
+        for class_id, class_dets in enumerate(per_class):
+            if class_dets is None or len(class_dets) == 0:
+                continue
+            for det in class_dets:
+                if len(det) < 5:
+                    continue
+                y1, x1, y2, x2, score = det[:5]
+                detections.append((
+                    x1 * self.input_shape[0], y1 * self.input_shape[1],
+                    x2 * self.input_shape[0], y2 * self.input_shape[1],
+                    score, class_id,
+                ))
+
+        if not detections:
+            return np.empty((0, 6))
+        return np.array(detections)
 
     def _preprocess(self, frame: np.ndarray) -> np.ndarray:
+        """
+        This HEF expects UINT8 NHWC input (not normalized float) — Hailo
+        bakes normalization into the compiled model itself. Sending
+        float32 0-1 data here would silently produce garbage detections.
+        """
         import cv2
         resized = cv2.resize(frame, self.input_shape)
-        return resized.astype(np.float32) / 255.0
+        return resized.astype(np.uint8)
 
     def _mock_infer(self, frame: np.ndarray) -> np.ndarray:
         """
@@ -103,8 +173,18 @@ class HailoInferenceEngine:
         return np.empty((0, 6))
 
     def close(self) -> None:
-        if self._device is not None:
+        """
+        Releases this engine's network group only. The shared VDevice
+        itself is released once via release_shared_vdevice() at process
+        shutdown — not here, since other engines may still be using it.
+        """
+        if self._infer_pipeline is not None:
             try:
-                self._device.release()
+                self._infer_pipeline.__exit__(None, None, None)
+            except Exception:
+                pass
+        if self._network_group is not None:
+            try:
+                self._network_group.shutdown()
             except Exception:
                 pass
