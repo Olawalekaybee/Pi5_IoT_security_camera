@@ -31,23 +31,60 @@ class DetectionPipeline:
         self.on_detection: Optional[Callable[[DetectionEvent], None]] = None
         self._running = False
         self._cap = None
+        self._camera_backend = None
 
     def _open_camera(self):
+        """
+        Tries picamera2 first (the correct API for CSI Pi Camera Modules
+        on Bookworm/libcamera — cv2.VideoCapture can falsely report
+        'opened' on these while never returning real frames). Falls
+        back to OpenCV VideoCapture for USB webcams, and finally to
+        synthetic frames if no camera is available at all.
+        """
+        try:
+            from picamera2 import Picamera2
+            picam2 = Picamera2()
+            config = picam2.create_preview_configuration(
+                main={"size": (640, 480), "format": "RGB888"}
+            )
+            picam2.configure(config)
+            picam2.start()
+            self._camera_backend = "picamera2"
+            logger.info("Camera opened via picamera2 (CSI Pi Camera Module)")
+            return picam2
+        except Exception as exc:
+            logger.info(f"picamera2 unavailable or no CSI camera ({exc}) — trying USB/OpenCV")
+
         import cv2
         cap = cv2.VideoCapture(self.camera_index)
-        if not cap.isOpened():
-            logger.warning(
-                f"Could not open camera index {self.camera_index} — "
-                "falling back to synthetic frames for demo purposes"
-            )
-            return None
-        return cap
+        if cap.isOpened():
+            ok, _ = cap.read()
+            if ok:
+                self._camera_backend = "opencv"
+                logger.info(f"Camera opened via OpenCV (index {self.camera_index})")
+                return cap
+            cap.release()
+
+        logger.warning(
+            f"Could not open any camera (CSI or index {self.camera_index}) — "
+            "falling back to synthetic frames for demo purposes"
+        )
+        self._camera_backend = None
+        return None
 
     def _read_frame(self) -> np.ndarray:
         if self._cap is not None:
-            ok, frame = self._cap.read()
-            if ok:
-                return frame
+            if self._camera_backend == "picamera2":
+                # picamera2 returns RGB; the rest of the pipeline (and
+                # OpenCV's own VideoCapture) assumes BGR, so convert to
+                # keep color channels consistent across both backends.
+                import cv2
+                rgb_frame = self._cap.capture_array()
+                return cv2.cvtColor(rgb_frame, cv2.COLOR_RGB2BGR)
+            elif self._camera_backend == "opencv":
+                ok, frame = self._cap.read()
+                if ok:
+                    return frame
         # Synthetic frame fallback (no camera attached)
         return (np.random.rand(480, 640, 3) * 255).astype(np.uint8)
 
@@ -121,6 +158,12 @@ class DetectionPipeline:
     def stop(self) -> None:
         self._running = False
         if self._cap is not None:
-            self._cap.release()
+            try:
+                if self._camera_backend == "picamera2":
+                    self._cap.stop()
+                elif self._camera_backend == "opencv":
+                    self._cap.release()
+            except Exception:
+                pass
         self.engine.close()
         logger.info("Detection pipeline stopped")
