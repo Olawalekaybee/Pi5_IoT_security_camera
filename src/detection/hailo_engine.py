@@ -30,15 +30,24 @@ _shared_vdevice = None
 def _get_shared_vdevice():
     """
     A physical Hailo-8L exposes exactly one device. Both the detection
-    model and the Re-ID model need to run on it, so we open the VDevice
-    once and configure multiple network groups (one per .hef) on it,
-    instead of each engine opening its own VDevice (which fails with
-    HAILO_OUT_OF_PHYSICAL_DEVICES on the second call).
+    model and the Re-ID model need to run on it. Without the scheduler,
+    only one network group can be "activated" at a time — manually
+    activating both (one per engine) throws HAILO_INVALID_OPERATION
+    the moment the second engine tries to activate while the first is
+    still held open.
+
+    The fix is HailoRT's built-in model scheduler: create the VDevice
+    with scheduling_algorithm=ROUND_ROBIN and a shared group_id, and
+    activation/deactivation between network groups is handled
+    automatically per-inference-call — no manual activate() needed.
     """
     global _shared_vdevice
     if _shared_vdevice is None:
-        _shared_vdevice = hpf.VDevice()
-        logger.info("Opened shared Hailo VDevice")
+        params = hpf.VDevice.create_params()
+        params.scheduling_algorithm = hpf.HailoSchedulingAlgorithm.ROUND_ROBIN
+        params.group_id = "shared"
+        _shared_vdevice = hpf.VDevice(params)
+        logger.info("Opened shared Hailo VDevice (Round Robin scheduler enabled)")
     return _shared_vdevice
 
 
@@ -69,7 +78,6 @@ class HailoInferenceEngine:
         self._device = None
         self._network_group = None
         self._infer_pipeline = None
-        self._activation_context = None
         self._last_frame_shape = None
 
         if self.mock_mode:
@@ -104,13 +112,13 @@ class HailoInferenceEngine:
         resized = self._preprocess(frame)
 
         if self._infer_pipeline is None:
-            # The network group must be explicitly activated before any
-            # vstream can be written to — configure() alone only defines
-            # it. We keep the activation context alive for the engine's
-            # lifetime alongside the cached InferVStreams pipeline.
-            self._activation_context = self._network_group.activate()
-            self._activation_context.__enter__()
-
+            # With the VDevice's Round Robin scheduler enabled (see
+            # _get_shared_vdevice), activation/deactivation between
+            # network groups is handled automatically by HailoRT on
+            # each inference call — manually calling activate() here
+            # would conflict with the scheduler and throw
+            # HAILO_INVALID_OPERATION once a second network group
+            # (e.g. the Re-ID model) tries to run on the same device.
             self._infer_pipeline = hpf.InferVStreams(
                 self._network_group,
                 hpf.InputVStreamParams.make(self._network_group),
@@ -213,11 +221,6 @@ class HailoInferenceEngine:
         if self._infer_pipeline is not None:
             try:
                 self._infer_pipeline.__exit__(None, None, None)
-            except Exception:
-                pass
-        if self._activation_context is not None:
-            try:
-                self._activation_context.__exit__(None, None, None)
             except Exception:
                 pass
         if self._network_group is not None:
