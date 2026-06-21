@@ -80,7 +80,7 @@ def main():
     # Start dashboard in background thread
     dashboard = None
     if not args.no_dashboard:
-        dashboard = DashboardServer(db=db, settings=settings)
+        dashboard = DashboardServer(db=db, settings=settings, pipeline=pipeline)
         dashboard_thread = threading.Thread(
             target=dashboard.run, daemon=True, name="dashboard"
         )
@@ -91,7 +91,10 @@ def main():
     def shutdown(sig, frame):
         logger.info("Shutting down...")
         pipeline.stop()
+        identifier.close()
         db.close()
+        from src.detection.hailo_engine import release_shared_vdevice
+        release_shared_vdevice()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, shutdown)

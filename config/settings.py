@@ -46,6 +46,7 @@ class DashboardSettings:
     port: int = 5000
     host: str = "0.0.0.0"
     max_events_page: int = 50
+    video_feed_fps: int = 12   # MJPEG stream rate; kept modest to limit bandwidth/CPU
 
 
 @dataclass
