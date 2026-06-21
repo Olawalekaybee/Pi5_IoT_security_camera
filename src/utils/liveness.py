@@ -29,8 +29,9 @@ import numpy as np
 
 @dataclass
 class _Track:
-    positions: Deque[Tuple[float, float]]  # box center history
-    sizes: Deque[Tuple[float, float]]       # box width/height history
+    positions: Deque[Tuple[float, float]]   # box center history
+    sizes: Deque[Tuple[float, float]]        # box width/height history
+    timestamps: Deque[float]                 # wall-clock time of each sample
     last_seen: float
 
 
@@ -39,33 +40,43 @@ class LivenessTracker:
     Tracks bounding-box motion per recognized identity across frames to
     flag suspiciously static (likely photo/screen) detections.
 
-    Usage: call update(person_id, bbox) once per frame per detection
+    Usage: call update(person_id, bbox) once per sample per detection
     that has a person_id (only known/enrolled people, since that's the
     case that actually matters — an unknown person already triggers an
-    alert regardless of liveness).
+    alert regardless of liveness). Samples don't need to arrive at a
+    fixed rate — see motion_threshold_px_per_sec below.
     """
 
     def __init__(
         self,
         history_len: int = 15,
         min_samples: int = 8,
-        motion_threshold_px: float = 1.2,
+        motion_threshold_px_per_sec: float = 3.0,
         track_timeout_s: float = 5.0,
     ):
         """
-        history_len: how many recent frames to keep per identity.
-        min_samples: minimum frames seen before making any liveness call
-            (avoids false "suspicious" flags on a person who just walked in).
-        motion_threshold_px: average frame-to-frame center movement, in
-            pixels, below which a track is flagged as suspiciously static.
-            Tuned conservatively low — real people rarely sit phone-still;
-            adjust upward if you see false positives on calm/seated subjects.
+        history_len: how many recent samples to keep per identity.
+        min_samples: minimum samples seen before making any liveness
+            call (avoids false "suspicious" flags on a person who just
+            walked in).
+        motion_threshold_px_per_sec: average center movement speed, in
+            pixels PER SECOND, below which a track is flagged as
+            suspiciously static. Expressed as a rate rather than a
+            fixed per-sample distance because update() may be called
+            at varying intervals — e.g. when fed by a throttled Re-ID
+            pipeline that only samples a given person every ~0.4s rather
+            than every camera frame. A fixed per-sample threshold tuned
+            for one sampling rate silently miscalibrates at another;
+            this didn't matter when update() was assumed to run once
+            per frame, but broke once an upstream throttle (matching
+            Re-ID calls to ~2-3/sec per person) changed the actual
+            sampling interval without changing this threshold's units.
         track_timeout_s: drop a track if not updated for this long, so
             stale identities don't linger forever in memory.
         """
         self.history_len = history_len
         self.min_samples = min_samples
-        self.motion_threshold_px = motion_threshold_px
+        self.motion_threshold_px_per_sec = motion_threshold_px_per_sec
         self.track_timeout_s = track_timeout_s
         self._tracks: Dict[str, _Track] = {}
 
@@ -74,7 +85,8 @@ class LivenessTracker:
         return ((x1 + x2) / 2.0, (y1 + y2) / 2.0), (x2 - x1, y2 - y1)
 
     def update(self, person_id: str, bbox: Tuple[int, int, int, int]) -> None:
-        """Record this frame's detection for the given identity."""
+        """Record a fresh sample for the given identity, whenever it
+        actually arrives (no fixed-rate assumption)."""
         center, size = self._bbox_center_and_size(bbox)
         now = time.time()
 
@@ -83,12 +95,14 @@ class LivenessTracker:
             track = _Track(
                 positions=deque(maxlen=self.history_len),
                 sizes=deque(maxlen=self.history_len),
+                timestamps=deque(maxlen=self.history_len),
                 last_seen=now,
             )
             self._tracks[person_id] = track
 
         track.positions.append(center)
         track.sizes.append(size)
+        track.timestamps.append(now)
         track.last_seen = now
         self._prune_stale(now)
 
@@ -99,34 +113,44 @@ class LivenessTracker:
 
     def get_liveness_score(self, person_id: str) -> Optional[float]:
         """
-        Returns average frame-to-frame center displacement in pixels, or
-        None if not enough history yet to make a call. Higher = more
-        natural motion observed; values near zero suggest a static
-        photo/screen rather than a live person.
+        Returns average motion SPEED in pixels/second across the
+        tracked history, or None if not enough samples yet to judge.
+        Higher = more natural motion observed; values near zero suggest
+        a static photo/screen rather than a live person. Using a rate
+        rather than raw per-sample displacement makes this robust to
+        irregular or throttled sampling intervals.
         """
         track = self._tracks.get(person_id)
         if track is None or len(track.positions) < self.min_samples:
             return None
 
         positions = list(track.positions)
-        displacements = [
-            float(np.hypot(positions[i][0] - positions[i - 1][0],
-                            positions[i][1] - positions[i - 1][1]))
-            for i in range(1, len(positions))
-        ]
-        return float(np.mean(displacements))
+        timestamps = list(track.timestamps)
+        speeds = []
+        for i in range(1, len(positions)):
+            dt = timestamps[i] - timestamps[i - 1]
+            if dt <= 0:
+                continue
+            dist = float(np.hypot(positions[i][0] - positions[i - 1][0],
+                                   positions[i][1] - positions[i - 1][1]))
+            speeds.append(dist / dt)
+
+        if not speeds:
+            return None
+        return float(np.mean(speeds))
 
     def is_suspiciously_static(self, person_id: str) -> Optional[bool]:
         """
-        Returns True if this identity's recent motion is below the
-        static-photo heuristic threshold, False if motion looks natural,
-        or None if there isn't enough history yet to judge. None should
-        be treated as "no opinion yet" — don't flag or clear on it.
+        Returns True if this identity's recent motion speed is below
+        the static-photo heuristic threshold, False if motion looks
+        natural, or None if there isn't enough history yet to judge.
+        None should be treated as "no opinion yet" — don't flag or
+        clear on it.
         """
         score = self.get_liveness_score(person_id)
         if score is None:
             return None
-        return score < self.motion_threshold_px
+        return score < self.motion_threshold_px_per_sec
 
     def reset(self, person_id: Optional[str] = None) -> None:
         """Clear tracking history for one identity, or all if None."""
