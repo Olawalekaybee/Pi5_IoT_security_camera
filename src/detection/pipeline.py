@@ -53,6 +53,15 @@ class DetectionPipeline:
         self._latest_raw_frame: Optional[np.ndarray] = None
         self._latest_detections: List[tuple] = []
 
+        # Throttles how often we actually JPEG-encode a frame for the
+        # dashboard. Without this, encoding ran on every detection-loop
+        # iteration (e.g. 30/sec) regardless of video_feed_fps, which
+        # only throttled the *serving* rate — the encode itself still
+        # competed with detection/Re-ID for the same CPU core on every
+        # single frame, causing visible stutter under load. Now encoding
+        # itself is rate-limited to roughly match what's actually served.
+        self._last_encode_time: float = 0.0
+
     def _open_camera(self):
         """
         Tries picamera2 first (the correct API for CSI Pi Camera Modules
@@ -148,7 +157,20 @@ class DetectionPipeline:
         copy of the frame, JPEG-encodes it, and stores it for the
         dashboard's MJPEG stream to pick up. annotated_dets entries:
         {bbox, detection_confidence, person_id, reid_confidence, zone, alerted}
+
+        Throttled to roughly video_feed_fps regardless of how fast the
+        detection loop itself runs — encoding every detection-loop frame
+        (e.g. 30/sec) wastes CPU the dashboard never actually consumes
+        (it only serves at video_feed_fps anyway), and that extra encode
+        work was competing with detection/Re-ID inference on the same
+        core, causing visible video stutter.
         """
+        target_interval = 1.0 / max(self.settings.dashboard.video_feed_fps, 1)
+        now = time.time()
+        if now - self._last_encode_time < target_interval:
+            return
+        self._last_encode_time = now
+
         import cv2
         canvas = frame.copy()
         canvas = self._draw_zone_overlays(canvas)
