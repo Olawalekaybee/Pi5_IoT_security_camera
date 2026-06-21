@@ -15,6 +15,14 @@ This project turns a Raspberry Pi 5 and a Hailo-8L AI HAT+ into a self-contained
 
 It was built to demonstrate real embedded AI engineering against real hardware constraints: a single physical NPU shared between two models, a CPU that has to keep up with detection, re-identification, and video encoding all at once, and the debugging that real deployments actually require — not a notebook demo.
 
+## In action
+
+| Hardware setup | Live dashboard |
+|---|---|
+| ![Hailo-8L HAT and Pi Camera Module wired to the Raspberry Pi 5](docs/images/hardware.jpeg) | ![Live dashboard showing annotated video feed and event log](docs/images/setup.jpeg) |
+
+The dashboard screenshot above is from a live session: real-time detection boxes on the video feed, the recent-events table updating via Server-Sent Events, and the in-browser enrollment panel — all running on the hardware pictured.
+
 ## Why this exists
 
 Most computer vision portfolio projects run on a laptop GPU or a cloud API and stop at "it detects objects." This project goes further in a few specific ways:
