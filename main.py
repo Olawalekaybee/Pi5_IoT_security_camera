@@ -16,6 +16,7 @@ from src.alerts.telegram_bot import TelegramAlert
 from src.dashboard.server import DashboardServer
 from src.utils.database import Database
 from src.utils.logger import setup_logger
+from src.utils.liveness import LivenessTracker
 from config.settings import Settings
 
 
@@ -72,9 +73,13 @@ def main():
         enabled=not args.no_alerts,
     )
 
+    # Motion-based liveness heuristic — see src/utils/liveness.py for
+    # an honest explanation of what this can and can't actually catch.
+    liveness = LivenessTracker()
+
     # Wire components together
     pipeline.on_detection = lambda event: handle_detection(
-        event, identifier, alert, db, settings
+        event, identifier, alert, db, settings, liveness
     )
 
     # Start dashboard in background thread
@@ -107,10 +112,10 @@ def main():
         pipeline.run()
 
 
-def handle_detection(event, identifier, alert, db, settings):
+def handle_detection(event, identifier, alert, db, settings, liveness):
     """
     Called on every detection event from the pipeline.
-    Runs Re-ID, decides alert, writes to DB.
+    Runs Re-ID, liveness heuristic, decides alert, writes to DB.
     """
     person_id, confidence = identifier.identify(event.crop)
     event.person_id = person_id
@@ -119,6 +124,19 @@ def handle_detection(event, identifier, alert, db, settings):
     is_unknown = person_id is None or confidence < settings.reid.alert_threshold
     in_restricted = event.zone in settings.zones.restricted
 
+    # Liveness only matters for someone who'd otherwise be trusted —
+    # an already-unknown person triggers an alert regardless. Track
+    # motion under the *claimed* identity so a photo of a known person
+    # held up to the camera still gets flagged, even though Re-ID
+    # correctly matches the face in the photo.
+    spoof_suspected = False
+    if person_id is not None:
+        liveness.update(person_id, event.bbox)
+        is_static = liveness.is_suspiciously_static(person_id)
+        event.liveness_static = is_static
+        if is_static is True:
+            spoof_suspected = True
+
     db.insert_event(event)
 
     if is_unknown and in_restricted:
@@ -126,6 +144,17 @@ def handle_detection(event, identifier, alert, db, settings):
             f"Unknown person in restricted zone '{event.zone}' "
             f"(Re-ID conf: {confidence:.2f})"
         )
+        alert.send(event)
+    elif spoof_suspected and in_restricted:
+        logger.warning(
+            f"Possible spoof: '{person_id}' matched in zone '{event.zone}' "
+            f"but motion looks static (likely a photo/screen, not a live person) — "
+            f"alerting despite the Re-ID match"
+        )
+        # Keep person_id intact for display (so the dashboard/video feed
+        # can show "olawale (SPOOF?)" rather than losing the identity
+        # info), but alert.send() doesn't care about person_id — it
+        # alerts based on the event being passed to it regardless.
         alert.send(event)
 
 

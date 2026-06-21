@@ -27,6 +27,7 @@ class DetectionEvent:
     reid_confidence: float = 0.0
     snapshot_path: Optional[str] = None
     alerted: bool = False
+    liveness_static: Optional[bool] = None  # True if motion heuristic flagged a likely photo/screen spoof
 
 
 class Database:
@@ -42,7 +43,8 @@ class Database:
         person_id TEXT,
         reid_confidence REAL,
         snapshot_path TEXT,
-        alerted INTEGER DEFAULT 0
+        alerted INTEGER DEFAULT 0,
+        liveness_static INTEGER DEFAULT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_events_zone ON events(zone);
@@ -75,22 +77,39 @@ class Database:
         with self._lock:
             self.conn.executescript(self.SCHEMA)
             self.conn.commit()
+            self._migrate_add_liveness_column()
         logger.info(f"Database initialized at {self.db_path} (WAL mode)")
 
+    def _migrate_add_liveness_column(self) -> None:
+        """
+        CREATE TABLE IF NOT EXISTS won't add a new column to a database
+        file that already exists from before this field was introduced —
+        add it via ALTER TABLE if missing, so existing event databases
+        (like one already running on a deployed Pi) upgrade cleanly
+        instead of crashing on the new column reference.
+        """
+        existing_cols = {row["name"] for row in self.conn.execute("PRAGMA table_info(events)")}
+        if "liveness_static" not in existing_cols:
+            self.conn.execute("ALTER TABLE events ADD COLUMN liveness_static INTEGER DEFAULT NULL")
+            self.conn.commit()
+            logger.info("Migrated events table: added liveness_static column")
+
     def insert_event(self, event: DetectionEvent) -> int:
+        liveness_value = None if event.liveness_static is None else int(event.liveness_static)
         with self._lock:
             cur = self.conn.execute(
                 """INSERT INTO events
                    (timestamp, zone, bbox_x1, bbox_y1, bbox_x2, bbox_y2,
                     detection_confidence, person_id, reid_confidence,
-                    snapshot_path, alerted)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    snapshot_path, alerted, liveness_static)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     event.timestamp, event.zone,
                     *event.bbox,
                     event.detection_confidence,
                     event.person_id, event.reid_confidence,
                     event.snapshot_path, int(event.alerted),
+                    liveness_value,
                 ),
             )
             self.conn.commit()

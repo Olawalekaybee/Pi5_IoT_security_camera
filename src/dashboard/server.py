@@ -68,6 +68,7 @@ PAGE_TEMPLATE = """
   tbody tr:hover { background: var(--panel-2); }
   .alerted { color: var(--warn); font-weight: 600; }
   .ok-status { color: var(--ok); }
+  .spoof-status { color: #ffa500; font-weight: 600; }
   .events-scroll { max-height: 480px; overflow-y: auto; }
 
   .enroll-body { padding: 1rem; }
@@ -108,6 +109,7 @@ PAGE_TEMPLATE = """
       <div class="legend">
         <span><span class="swatch" style="background:#50c878;"></span>Recognized</span>
         <span><span class="swatch" style="background:#e63c3c;"></span>Unknown / Alert</span>
+        <span><span class="swatch" style="background:#ffa500;"></span>Spoof suspected</span>
         <span><span class="swatch" style="background:#c8a03c;"></span>Zone boundary</span>
       </div>
     </div>
@@ -151,15 +153,26 @@ evtSource.onmessage = function(e) {
     <div class="stat"><div class="label">Last 24h</div><div class="value">${data.stats.events_24h}</div></div>
   `;
   const tbody = document.querySelector("#events tbody");
-  tbody.innerHTML = data.events.map(ev => `
+  tbody.innerHTML = data.events.map(ev => {
+    let statusClass = "ok-status";
+    let statusText = "logged";
+    if (ev.liveness_static === 1) {
+      statusClass = "spoof-status";
+      statusText = "SPOOF?";
+    } else if (ev.alerted) {
+      statusClass = "alerted";
+      statusText = "ALERTED";
+    }
+    return `
     <tr>
       <td>${new Date(ev.timestamp * 1000).toLocaleTimeString()}</td>
       <td>${ev.zone}</td>
       <td>${(ev.detection_confidence * 100).toFixed(0)}%</td>
       <td>${ev.person_id || "unknown"}</td>
-      <td class="${ev.alerted ? 'alerted' : 'ok-status'}">${ev.alerted ? "ALERTED" : "logged"}</td>
+      <td class="${statusClass}">${statusText}</td>
     </tr>
-  `).join("");
+  `;
+  }).join("");
 };
 
 // --- Enrollment workflow ---

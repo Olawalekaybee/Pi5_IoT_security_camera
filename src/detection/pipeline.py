@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 COLOR_KNOWN = (80, 200, 120)      # green-ish — recognized person
 COLOR_UNKNOWN = (60, 60, 230)     # red-ish — unrecognized / alert
 COLOR_ZONE_LINE = (200, 160, 60)  # amber — zone boundary overlay
+COLOR_SPOOF = (0, 165, 255)       # orange — recognized face, but motion looks static (possible photo/screen)
 
 
 class DetectionPipeline:
@@ -155,13 +156,25 @@ class DetectionPipeline:
         for det in annotated_dets:
             x1, y1, x2, y2 = det["bbox"]
             known = det.get("person_id") is not None
-            color = COLOR_KNOWN if known else COLOR_UNKNOWN
+            is_spoof_suspected = det.get("liveness_static") is True
+
+            if is_spoof_suspected:
+                color = COLOR_SPOOF
+            elif known:
+                color = COLOR_KNOWN
+            else:
+                color = COLOR_UNKNOWN
 
             cv2.rectangle(canvas, (x1, y1), (x2, y2), color, 2)
 
             name = det.get("person_id") or "unknown"
             reid_conf = det.get("reid_confidence", 0.0)
-            label = f"{name} ({reid_conf:.0%})" if known else f"{name} ({det['detection_confidence']:.0%})"
+            if is_spoof_suspected:
+                label = f"{name} (SPOOF?)"
+            elif known:
+                label = f"{name} ({reid_conf:.0%})"
+            else:
+                label = f"{name} ({det['detection_confidence']:.0%})"
 
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             label_y = max(0, y1 - 6)
@@ -232,6 +245,7 @@ class DetectionPipeline:
                     "detection_confidence": ev.detection_confidence,
                     "person_id": ev.person_id,
                     "reid_confidence": ev.reid_confidence,
+                    "liveness_static": ev.liveness_static,
                 }
                 for ev in frame_events
             ])
