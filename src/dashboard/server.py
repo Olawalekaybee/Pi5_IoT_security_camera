@@ -342,7 +342,7 @@ class DashboardServer:
                         "stats": self.db.get_stats(),
                     }
                     yield f"data: {json.dumps(payload)}\n\n"
-                    time.sleep(1.5)
+                    time.sleep(2.5)
 
             return Response(event_stream(), mimetype="text/event-stream")
 
