@@ -45,6 +45,13 @@ class DetectionPipeline:
         self._latest_jpeg: Optional[bytes] = None
         self._frame_lock = threading.Lock()
 
+        # Latest raw (unannotated) frame plus its detected person boxes,
+        # so the dashboard's "capture for enrollment" button can grab a
+        # fresh, real crop on demand rather than needing a separate
+        # camera session.
+        self._latest_raw_frame: Optional[np.ndarray] = None
+        self._latest_detections: List[tuple] = []
+
     def _open_camera(self):
         """
         Tries picamera2 first (the correct API for CSI Pi Camera Modules
@@ -172,6 +179,22 @@ class DetectionPipeline:
         with self._frame_lock:
             return self._latest_jpeg
 
+    def capture_person_crop(self) -> Optional[np.ndarray]:
+        """
+        Returns the highest-confidence person crop from the most recent
+        frame, for use by the dashboard's enrollment capture button.
+        Returns None if no person is currently in frame.
+        """
+        with self._frame_lock:
+            frame = self._latest_raw_frame
+            dets = list(self._latest_detections)
+
+        if frame is None or not dets:
+            return None
+
+        (x1, y1, x2, y2), conf = max(dets, key=lambda d: d[1])
+        return frame[max(0, y1):y2, max(0, x1):x2].copy()
+
     def run(self) -> None:
         self._running = True
         self._cap = self._open_camera()
@@ -212,6 +235,12 @@ class DetectionPipeline:
                 }
                 for ev in frame_events
             ])
+
+            with self._frame_lock:
+                self._latest_raw_frame = frame
+                self._latest_detections = [
+                    (ev.bbox, ev.detection_confidence) for ev in frame_events
+                ]
 
             elapsed = time.time() - t0
             sleep_time = frame_interval - elapsed

@@ -80,7 +80,7 @@ def main():
     # Start dashboard in background thread
     dashboard = None
     if not args.no_dashboard:
-        dashboard = DashboardServer(db=db, settings=settings, pipeline=pipeline)
+        dashboard = DashboardServer(db=db, settings=settings, pipeline=pipeline, identifier=identifier)
         dashboard_thread = threading.Thread(
             target=dashboard.run, daemon=True, name="dashboard"
         )

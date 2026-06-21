@@ -8,6 +8,7 @@ similarity to decide "known" vs "unknown".
 from __future__ import annotations
 import logging
 import json
+import threading
 from pathlib import Path
 from typing import Optional, Tuple, Dict
 import numpy as np
@@ -28,6 +29,12 @@ class PersonIdentifier:
     def __init__(self, model_path: str, known_faces_dir: str, threshold: float = 0.75):
         self.engine = HailoInferenceEngine(model_path, input_shape=(128, 256))
         self.threshold = threshold
+        # The dashboard's enrollment endpoint (Flask request thread) and
+        # the live detection pipeline (its own thread) both call into
+        # this same engine concurrently. HailoRT's per-network-group
+        # infer pipeline isn't verified safe for concurrent calls from
+        # multiple threads, so serialize all engine access here.
+        self._engine_lock = threading.Lock()
         self.known_faces_dir = Path(known_faces_dir)
         self.known_faces_dir.mkdir(parents=True, exist_ok=True)
         self.gallery: Dict[str, np.ndarray] = {}
@@ -81,7 +88,8 @@ class PersonIdentifier:
             vec = np.concatenate([stats, noise])
             vec = np.resize(vec, EMBED_DIM)
         else:
-            raw = self.engine.infer(crop)
+            with self._engine_lock:
+                raw = self.engine.infer(crop)
             vec = np.asarray(raw, dtype=np.float64).flatten()
             if vec.size != EMBED_DIM:
                 logger.warning(

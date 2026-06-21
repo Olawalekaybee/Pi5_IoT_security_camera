@@ -69,6 +69,24 @@ PAGE_TEMPLATE = """
   .alerted { color: var(--warn); font-weight: 600; }
   .ok-status { color: var(--ok); }
   .events-scroll { max-height: 480px; overflow-y: auto; }
+
+  .enroll-body { padding: 1rem; }
+  .enroll-hint { font-size: 0.8rem; color: var(--text-dim); margin: 0 0 0.9rem; line-height: 1.5; }
+  .enroll-controls { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; margin-bottom: 0.8rem; }
+  .enroll-controls input[type="text"] {
+    background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 0.5rem 0.75rem; font-size: 0.85rem; min-width: 180px;
+  }
+  .enroll-controls button {
+    background: var(--accent); color: white; border: none; border-radius: 8px;
+    padding: 0.5rem 0.9rem; font-size: 0.82rem; cursor: pointer; font-weight: 500;
+  }
+  .enroll-controls button:disabled { background: #3a3d46; cursor: not-allowed; opacity: 0.6; }
+  #btn-clear { background: var(--panel-2); border: 1px solid var(--border); }
+  .thumbs { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.6rem; min-height: 0; }
+  .thumb { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }
+  .enroll-status { font-size: 0.8rem; color: var(--text-dim); min-height: 1.2em; }
+  .enroll-status.error { color: var(--warn); }
 </style>
 </head>
 <body>
@@ -105,6 +123,24 @@ PAGE_TEMPLATE = """
     </div>
   </div>
 
+  <div class="panel" style="margin-top: 1.25rem;">
+    <div class="panel-header"><span>Enroll Known Person</span></div>
+    <div class="enroll-body">
+      <p class="enroll-hint">
+        Stand in frame, then capture 3-5 photos from different angles/distances for a robust match.
+        Each capture grabs whoever is currently detected in the live feed.
+      </p>
+      <div class="enroll-controls">
+        <input type="text" id="enroll-name" placeholder="Person's name" maxlength="40">
+        <button id="btn-capture" onclick="captureForEnroll()">Capture Photo</button>
+        <button id="btn-save" onclick="saveEnrollment()" disabled>Save Enrollment (0)</button>
+        <button id="btn-clear" onclick="clearEnrollment()">Clear</button>
+      </div>
+      <div class="thumbs" id="enroll-thumbs"></div>
+      <div class="enroll-status" id="enroll-status"></div>
+    </div>
+  </div>
+
 <script>
 const evtSource = new EventSource("/stream");
 evtSource.onmessage = function(e) {
@@ -125,6 +161,82 @@ evtSource.onmessage = function(e) {
     </tr>
   `).join("");
 };
+
+// --- Enrollment workflow ---
+let stagedTokens = [];
+
+function setEnrollStatus(msg, isError) {
+  const el = document.getElementById("enroll-status");
+  el.textContent = msg;
+  el.className = "enroll-status" + (isError ? " error" : "");
+}
+
+function updateSaveButton() {
+  const btn = document.getElementById("btn-save");
+  btn.textContent = `Save Enrollment (${stagedTokens.length})`;
+  btn.disabled = stagedTokens.length === 0;
+}
+
+async function captureForEnroll() {
+  const btn = document.getElementById("btn-capture");
+  btn.disabled = true;
+  setEnrollStatus("Capturing...", false);
+  try {
+    const res = await fetch("/api/enroll/capture", { method: "POST" });
+    const data = await res.json();
+    if (!res.ok) {
+      setEnrollStatus(data.error || "Capture failed", true);
+      return;
+    }
+    stagedTokens.push(data.token);
+    const thumbs = document.getElementById("enroll-thumbs");
+    const img = document.createElement("img");
+    img.src = data.thumbnail;
+    img.className = "thumb";
+    thumbs.appendChild(img);
+    updateSaveButton();
+    setEnrollStatus(`Captured ${stagedTokens.length} photo(s).`, false);
+  } catch (err) {
+    setEnrollStatus("Capture failed: " + err, true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function saveEnrollment() {
+  const name = document.getElementById("enroll-name").value.trim();
+  if (!name) {
+    setEnrollStatus("Enter a name first.", true);
+    return;
+  }
+  if (stagedTokens.length === 0) {
+    setEnrollStatus("Capture at least one photo first.", true);
+    return;
+  }
+  setEnrollStatus("Saving...", false);
+  try {
+    const res = await fetch("/api/enroll/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: name, tokens: stagedTokens }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setEnrollStatus(data.error || "Save failed", true);
+      return;
+    }
+    setEnrollStatus(`Enrolled '${data.name}' from ${data.photos_used} photo(s).`, false);
+    clearEnrollment();
+  } catch (err) {
+    setEnrollStatus("Save failed: " + err, true);
+  }
+}
+
+function clearEnrollment() {
+  stagedTokens = [];
+  document.getElementById("enroll-thumbs").innerHTML = "";
+  updateSaveButton();
+}
 </script>
 </body>
 </html>
@@ -132,16 +244,20 @@ evtSource.onmessage = function(e) {
 
 
 class DashboardServer:
-    def __init__(self, db, settings, pipeline=None):
+    def __init__(self, db, settings, pipeline=None, identifier=None):
         """
         pipeline is optional so the dashboard can still run standalone
         (e.g. for UI development) without a live detection pipeline;
         when provided, its get_latest_jpeg() feeds the /video_feed route.
+        identifier, when provided, enables the in-dashboard enrollment
+        flow (capturing fresh known-person photos from the live feed).
         """
         self.db = db
         self.settings = settings
         self.pipeline = pipeline
+        self.identifier = identifier
         self.app = Flask(__name__)
+        self._staged_crops = {}  # token -> numpy crop, pending enrollment save
         self._register_routes()
 
     def _register_routes(self):
@@ -197,6 +313,68 @@ class DashboardServer:
                 mjpeg_stream(),
                 mimetype="multipart/x-mixed-replace; boundary=frame",
             )
+
+        @app.route("/api/enroll/capture", methods=["POST"])
+        def enroll_capture():
+            """
+            Grabs the current best person crop from the live feed and
+            stages it in memory (keyed by name) for later saving. Returns
+            a small JPEG thumbnail as base64 so the dashboard can show a
+            preview before committing.
+            """
+            import cv2, base64
+
+            if self.pipeline is None or self.identifier is None:
+                return jsonify({"error": "capture not available"}), 503
+
+            crop = self.pipeline.capture_person_crop()
+            if crop is None:
+                return jsonify({"error": "no person currently in frame"}), 404
+
+            ok, jpeg = cv2.imencode(".jpg", crop, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if not ok:
+                return jsonify({"error": "encode failed"}), 500
+
+            token = f"capture_{int(time.time() * 1000)}"
+            self._staged_crops[token] = crop
+
+            thumb_b64 = base64.b64encode(jpeg.tobytes()).decode("ascii")
+            return jsonify({"token": token, "thumbnail": f"data:image/jpeg;base64,{thumb_b64}"})
+
+        @app.route("/api/enroll/save", methods=["POST"])
+        def enroll_save():
+            """
+            Enrolls the staged crops (by token, captured via
+            /api/enroll/capture) under the given name, averaging their
+            embeddings for a more robust reference than a single photo.
+            """
+            from flask import request
+
+            if self.identifier is None:
+                return jsonify({"error": "enrollment not available"}), 503
+
+            data = request.get_json(silent=True) or {}
+            name = (data.get("name") or "").strip()
+            tokens = data.get("tokens") or []
+
+            if not name:
+                return jsonify({"error": "name is required"}), 400
+            if not tokens:
+                return jsonify({"error": "no captured photos to save"}), 400
+
+            saved = 0
+            for i, token in enumerate(tokens):
+                crop = self._staged_crops.pop(token, None)
+                if crop is None:
+                    continue
+                self.identifier.enroll(name, crop, average_with_existing=(saved > 0))
+                saved += 1
+
+            if saved == 0:
+                return jsonify({"error": "none of the captured photos were found (expired?)"}), 400
+
+            logger.info(f"Enrolled '{name}' from {saved} dashboard-captured photo(s)")
+            return jsonify({"status": "ok", "name": name, "photos_used": saved})
 
     def run(self):
         self.app.run(
