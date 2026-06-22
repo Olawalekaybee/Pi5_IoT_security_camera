@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edge AI Security Monitor — Raspberry Pi 5 + Hailo-8L NPU</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #07080a; --bg2: #0d0f13; --panel: #11141a; --panel2: #161a21; --border: #20242c;
+    --text: #eef0f3; --text-dim: #7d838f; --text-mid: #aab0bb;
+    --cyan: #4ee3f0; --cyan-dim: rgba(78,227,240,0.12); --cyan-glow: rgba(78,227,240,0.35);
+    --ok: #4ade80; --warn: #fb7185; --spoof: #fbbf24; --amber: #f0a83c;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: var(--bg); color: var(--text); font-family: 'Inter', -apple-system, sans-serif;
+    overflow-x: hidden; -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--cyan-dim); color: var(--cyan); }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  .mono { font-family: 'JetBrains Mono', monospace; }
+  a { color: var(--cyan); text-decoration: none; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 2rem; }
+
+  .bg-grid {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background-image:
+      linear-gradient(rgba(78,227,240,0.035) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(78,227,240,0.035) 1px, transparent 1px);
+    background-size: 48px 48px;
+    mask-image: radial-gradient(ellipse 70% 60% at 50% 0%, black 0%, transparent 70%);
+  }
+  .scanline {
+    position: fixed; top: 0; left: 0; width: 100%; height: 2px; z-index: 5; pointer-events: none;
+    background: linear-gradient(90deg, transparent, var(--cyan-glow), transparent);
+    animation: scan-sweep 8s linear infinite;
+  }
+  @keyframes scan-sweep { 0% { top: -2px; } 100% { top: 100vh; } }
+
+  nav {
+    position: sticky; top: 0; z-index: 50; backdrop-filter: blur(14px);
+    background: rgba(7,8,10,0.78); border-bottom: 1px solid var(--border);
+  }
+  .nav-inner { display: flex; align-items: center; justify-content: space-between; padding: 0.9rem 2rem; max-width: 1180px; margin: 0 auto; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 0.95rem; letter-spacing: 0.01em; }
+  .brand-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 10px var(--cyan-glow); animation: dot-pulse 2s infinite; }
+  @keyframes dot-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .nav-links { display: flex; gap: 1.8rem; font-size: 0.84rem; color: var(--text-dim); white-space: nowrap; }
+  .nav-links a { padding: 0 0.1rem; }
+  .nav-links a:hover { color: var(--cyan); }
+  .nav-cta {
+    font-size: 0.8rem; padding: 0.45rem 1rem; border: 1px solid var(--border); border-radius: 8px;
+    color: var(--text); display: flex; align-items: center; gap: 6px; transition: all 0.2s;
+  }
+  .nav-cta:hover { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-dim); }
+
+  header.hero { position: relative; padding: 6rem 0 4rem; z-index: 2; }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px; font-family: 'JetBrains Mono', monospace; font-size: 0.72rem;
+    color: var(--ok); background: rgba(74,222,128,0.08); border: 1px solid rgba(74,222,128,0.25);
+    border-radius: 20px; padding: 5px 12px; letter-spacing: 0.05em; margin-bottom: 1.6rem;
+  }
+  .eyebrow .d { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); animation: dot-pulse 1.6s infinite; }
+  h1.title { font-size: clamp(2.2rem, 5vw, 3.6rem); font-weight: 700; line-height: 1.08; letter-spacing: -0.02em; max-width: 760px; }
+  h1.title .accent { color: var(--cyan); }
+  .subtitle { font-size: 1.1rem; color: var(--text-mid); max-width: 600px; margin: 1.3rem 0 2.2rem; line-height: 1.6; }
+  .hero-actions { display: flex; gap: 0.9rem; flex-wrap: wrap; margin-bottom: 3rem; }
+  .btn {
+    font-family: inherit; font-size: 0.88rem; font-weight: 500; padding: 0.7rem 1.3rem; border-radius: 9px;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 7px; transition: all 0.18s; border: none;
+  }
+  .btn-primary { background: var(--cyan); color: #03222a; }
+  .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 6px 24px var(--cyan-glow); }
+  .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn-ghost:hover { border-color: var(--text-mid); background: var(--panel2); }
+
+  .hero-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; background: var(--border); border-radius: 12px; overflow: hidden; border: 1px solid var(--border); }
+  .hstat { background: var(--bg2); padding: 1.1rem 1.2rem; }
+  .hstat .num { font-family: 'JetBrains Mono', monospace; font-size: 1.7rem; font-weight: 600; color: var(--cyan); display: flex; align-items: baseline; gap: 4px; }
+  .hstat .unit { font-size: 0.85rem; color: var(--text-dim); font-weight: 400; }
+  .hstat .lbl { font-size: 0.74rem; color: var(--text-dim); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+  @media (max-width: 760px) { .hero-stats { grid-template-columns: repeat(2,1fr); } }
+
+  section { position: relative; z-index: 2; padding: 5rem 0; border-top: 1px solid var(--border); }
+  .section-tag { font-family: 'JetBrains Mono', monospace; font-size: 0.74rem; color: var(--cyan); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 0.7rem; }
+  h2.h2 { font-size: 1.9rem; font-weight: 600; letter-spacing: -0.01em; margin-bottom: 0.7rem; }
+  .lead { color: var(--text-mid); max-width: 620px; font-size: 1rem; line-height: 1.65; margin-bottom: 2.6rem; }
+
+  .pipe-rail {
+    display: flex; align-items: stretch; gap: 0; overflow-x: auto; padding-bottom: 1rem; margin-bottom: 1.5rem; scrollbar-width: thin;
+  }
+  .pipe-node {
+    flex: 0 0 180px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 1.1rem;
+    cursor: pointer; transition: all 0.2s; position: relative; margin-right: 14px;
+  }
+  .pipe-node:hover { border-color: var(--cyan); transform: translateY(-2px); }
+  .pipe-node.active { border-color: var(--cyan); background: var(--cyan-dim); box-shadow: 0 0 0 1px var(--cyan-glow); }
+  .pipe-node .pn-icon { width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center; margin-bottom: 0.8rem; font-size: 16px; }
+  .pipe-node .pn-title { font-size: 0.92rem; font-weight: 600; margin-bottom: 2px; }
+  .pipe-node .pn-sub { font-size: 0.76rem; color: var(--text-dim); }
+  .pipe-arrow { flex: 0 0 28px; display: flex; align-items: center; justify-content: center; color: var(--text-dim); font-size: 18px; }
+  .pipe-detail {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 1.4rem 1.6rem;
+    font-size: 0.93rem; line-height: 1.6; color: var(--text-mid); min-height: 70px; transition: opacity 0.2s;
+  }
+  .pipe-detail .pd-title { color: var(--text); font-weight: 600; font-size: 1rem; margin-bottom: 0.4rem; display: flex; align-items: center; gap: 8px; }
+
+  .grid-2 { display: grid; grid-template-columns: 1.3fr 1fr; gap: 1.8rem; align-items: start; }
+  @media (max-width: 880px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  .console {
+    background: #050607; border: 1px solid var(--border); border-radius: 14px; overflow: hidden;
+    box-shadow: 0 30px 80px -30px rgba(0,0,0,0.7);
+  }
+  .console-bar { display: flex; align-items: center; justify-content: space-between; padding: 0.6rem 1rem; background: var(--panel); border-bottom: 1px solid var(--border); }
+  .console-bar .ttl { font-size: 0.72rem; color: var(--text-dim); font-family: 'JetBrains Mono', monospace; letter-spacing: 0.04em; display: flex; align-items: center; gap: 8px; }
+  .live-chip { display: inline-flex; align-items: center; gap: 5px; font-size: 0.68rem; color: var(--ok); font-family: 'JetBrains Mono', monospace; }
+  .live-chip .d { width: 5px; height: 5px; border-radius: 50%; background: var(--ok); animation: dot-pulse 1.6s infinite; }
+  .feed-stage { background: #000; aspect-ratio: 4/3; position: relative; overflow: hidden; }
+  .feed-stage svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .legend-row { display: flex; gap: 1.1rem; padding: 0.7rem 1rem; font-size: 0.72rem; color: var(--text-dim); flex-wrap: wrap; background: var(--panel); }
+  .legend-row span { display: inline-flex; align-items: center; gap: 5px; }
+  .sw { width: 7px; height: 7px; border-radius: 2px; }
+  .console-controls { display: flex; gap: 0.6rem; padding: 0.8rem 1rem; background: var(--panel2); }
+  .console-controls button {
+    font-family: inherit; font-size: 0.78rem; background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+    padding: 0.45rem 0.9rem; border-radius: 7px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;
+  }
+  .console-controls button:hover { border-color: var(--cyan); }
+  .console-controls button.danger:hover { border-color: var(--warn); }
+
+  .event-table { width: 100%; font-size: 0.78rem; border-collapse: collapse; }
+  .event-table thead th { text-align: left; color: var(--text-dim); font-weight: 500; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.04em; padding: 0.5rem 0.7rem; border-bottom: 1px solid var(--border); }
+  .event-table tbody td { padding: 0.55rem 0.7rem; font-family: 'JetBrains Mono', monospace; font-size: 0.76rem; border-bottom: 1px solid rgba(32,36,44,0.6); }
+  .event-table tbody tr { animation: row-in 0.3s ease; }
+  @keyframes row-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+  .stat-pane { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 1.3rem 1.4rem; height: 100%; }
+  .stat-pane h3 { font-size: 0.95rem; font-weight: 600; margin-bottom: 1rem; }
+  .mini-stat { display: flex; justify-content: space-between; align-items: baseline; padding: 0.65rem 0; border-bottom: 1px solid rgba(32,36,44,0.7); }
+  .mini-stat:last-child { border-bottom: none; }
+  .mini-stat .k { font-size: 0.82rem; color: var(--text-dim); }
+  .mini-stat .v { font-family: 'JetBrains Mono', monospace; font-size: 0.95rem; font-weight: 600; }
+
+  .chart-card { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 1.6rem; }
+  .chart-tabs { display: flex; gap: 0.5rem; margin-bottom: 1.4rem; }
+  .chart-tab { font-family: inherit; font-size: 0.8rem; padding: 0.4rem 0.9rem; border-radius: 7px; border: 1px solid var(--border); background: transparent; color: var(--text-dim); cursor: pointer; }
+  .chart-tab.active { border-color: var(--cyan); color: var(--cyan); background: var(--cyan-dim); }
+  .chart-canvas-wrap { position: relative; height: 280px; }
+
+  .stack-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; }
+  .stack-card { background: var(--panel); border: 1px solid var(--border); border-radius: 13px; padding: 1.2rem; transition: all 0.2s; }
+  .stack-card:hover { border-color: var(--cyan); transform: translateY(-3px); }
+  .stack-card .si { width: 36px; height: 36px; border-radius: 9px; background: var(--cyan-dim); color: var(--cyan); display: flex; align-items: center; justify-content: center; font-size: 17px; margin-bottom: 0.8rem; }
+  .stack-card .st { font-size: 0.9rem; font-weight: 600; margin-bottom: 3px; }
+  .stack-card .sd { font-size: 0.78rem; color: var(--text-dim); line-height: 1.4; }
+
+  .limits-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px,1fr)); gap: 14px; }
+  .limit-card { background: var(--panel); border: 1px solid rgba(251,191,36,0.25); border-radius: 13px; padding: 1.2rem 1.3rem; }
+  .limit-card .lh { display: flex; align-items: center; gap: 8px; color: var(--spoof); font-weight: 600; font-size: 0.88rem; margin-bottom: 0.5rem; }
+  .limit-card p { font-size: 0.83rem; color: var(--text-mid); line-height: 1.55; }
+
+  footer { padding: 3rem 0; text-align: center; color: var(--text-dim); font-size: 0.82rem; border-top: 1px solid var(--border); }
+  footer a { color: var(--text-mid); margin: 0 0.6rem; }
+  footer a:hover { color: var(--cyan); }
+
+  .reveal { opacity: 1; transform: translateY(0); }
+  .reveal.pending { opacity: 0; transform: translateY(18px); transition: opacity 0.6s ease, transform 0.6s ease; }
+  .reveal.pending.in { opacity: 1; transform: translateY(0); }
+</style>
+</head>
+<body>
+
+<div class="bg-grid" aria-hidden="true"></div>
+<div class="scanline" aria-hidden="true"></div>
+
+<nav>
+  <div class="nav-inner">
+    <div class="brand"><span class="brand-dot" aria-hidden="true"></span>Edge AI security monitor</div>
+    <div class="nav-links">
+      <a href="#pipeline">Pipeline</a>
+      <a href="#dashboard">Dashboard</a>
+      <a href="#benchmarks">Benchmarks</a>
+      <a href="#stack">Stack</a>
+      <a href="#limits">Limitations</a>
+    </div>
+    <a class="nav-cta" href="https://github.com/Olawalekaybee/Pi5_IoT_security_camera" target="_blank" rel="noopener">
+      <i class="ti ti-brand-github" aria-hidden="true"></i> GitHub
+    </a>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="eyebrow"><span class="d" aria-hidden="true"></span>RUNNING LIVE ON RASPBERRY PI 5 + HAILO-8L</span>
+    <h1 class="title">Real-time person detection<br>and re-identification, <span class="accent">fully offline.</span></h1>
+    <p class="subtitle">A dual-model computer vision pipeline running entirely on a 26 TOPS NPU — no cloud, no subscription, no internet dependency for inference. Built to demonstrate production-grade embedded AI engineering against real hardware constraints.</p>
+    <div class="hero-actions">
+      <button class="btn btn-primary" onclick="document.getElementById('dashboard').scrollIntoView({behavior:'smooth'})"><i class="ti ti-player-play" aria-hidden="true"></i> See it run</button>
+      <a class="btn btn-ghost" href="https://github.com/Olawalekaybee/Pi5_IoT_security_camera" target="_blank" rel="noopener"><i class="ti ti-brand-github" aria-hidden="true"></i> View source</a>
+    </div>
+    <div class="hero-stats">
+      <div class="hstat"><div class="num">75.1<span class="unit">fps</span></div><div class="lbl">Detection throughput</div></div>
+      <div class="hstat"><div class="num">11.9<span class="unit">ms</span></div><div class="lbl">Inference latency</div></div>
+      <div class="hstat"><div class="num">&lt;5<span class="unit">W</span></div><div class="lbl">NPU power draw</div></div>
+      <div class="hstat"><div class="num">44<span class="unit">tests</span></div><div class="lbl">Hardware-free CI</div></div>
+    </div>
+  </div>
+</header>
+
+<section id="pipeline">
+  <div class="wrap">
+    <div class="section-tag reveal">// inference flow</div>
+    <h2 class="h2 reveal">One frame, five stages, one shared NPU</h2>
+    <p class="lead reveal">Click a stage to see what actually happens there. Detection and re-identification both run on the same physical Hailo-8L device, coordinated by HailoRT's Round Robin scheduler.</p>
+
+    <div class="pipe-rail reveal" id="pipe-rail"></div>
+    <div class="pipe-detail reveal" id="pipe-detail"><div class="pd-title"><i class="ti ti-camera" style="color:var(--cyan);" aria-hidden="true"></i>Camera capture</div>Frame captured via picamera2 in video-mode configuration. Switching from preview-mode config to video-mode cut capture latency from roughly 65ms to under 10ms per frame on this hardware.</div>
+  </div>
+</section>
+
+<section id="dashboard">
+  <div class="wrap">
+    <div class="section-tag reveal">// live dashboard</div>
+    <h2 class="h2 reveal">Watch detections move through the zones</h2>
+    <p class="lead reveal">A faithful simulation of the real dashboard's visual language. Press simulate to generate detections — green means recognized, red means unknown and alerting, amber means a recognized match flagged by the liveness heuristic.</p>
+
+    <div class="grid-2 reveal">
+      <div class="console">
+        <div class="console-bar">
+          <span class="ttl"><i class="ti ti-camera" aria-hidden="true"></i> CAM 01 // LIVE FEED</span>
+          <span class="live-chip"><span class="d" aria-hidden="true"></span>LIVE</span>
+        </div>
+        <div class="feed-stage" id="feed-stage">
+          <svg viewBox="0 0 320 240" preserveAspectRatio="xMidYMid slice">
+            <line x1="160" y1="0" x2="160" y2="240" stroke="#3a3422" stroke-width="1" stroke-dasharray="4 3"/>
+            <text x="8" y="16" fill="#c8a03c" font-size="9" font-family="monospace">zone_a</text>
+            <text x="168" y="16" fill="#c8a03c" font-size="9" font-family="monospace">zone_b</text>
+            <g id="box-group"></g>
+          </svg>
+        </div>
+        <div class="legend-row">
+          <span><span class="sw" style="background:#4ade80;" aria-hidden="true"></span>Recognized</span>
+          <span><span class="sw" style="background:#fb7185;" aria-hidden="true"></span>Unknown / alert</span>
+          <span><span class="sw" style="background:#fbbf24;" aria-hidden="true"></span>Spoof suspected</span>
+          <span><span class="sw" style="background:#3a3422;" aria-hidden="true"></span>Zone boundary</span>
+        </div>
+        <div class="console-controls">
+          <button id="play-btn" onclick="togglePlay()"><i class="ti ti-player-play" aria-hidden="true"></i> Simulate</button>
+          <button class="danger" onclick="resetFeed()"><i class="ti ti-refresh" aria-hidden="true"></i> Reset</button>
+        </div>
+      </div>
+
+      <div style="display:flex; flex-direction:column; gap: 1rem;">
+        <div class="stat-pane">
+          <h3>Session stats</h3>
+          <div class="mini-stat"><span class="k">Total events</span><span class="v mono" id="stat-total">0</span></div>
+          <div class="mini-stat"><span class="k">Alerts fired</span><span class="v mono" id="stat-alerts" style="color:var(--warn);">0</span></div>
+          <div class="mini-stat"><span class="k">Spoofs flagged</span><span class="v mono" id="stat-spoof" style="color:var(--spoof);">0</span></div>
+        </div>
+        <div class="stat-pane" style="flex: 1; min-height:0; display:flex; flex-direction:column;">
+          <h3>Recent events</h3>
+          <div style="overflow-y:auto; max-height:220px;">
+            <table class="event-table">
+              <thead><tr><th>Time</th><th>Zone</th><th>Person</th><th>Status</th></tr></thead>
+              <tbody id="event-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="benchmarks">
+  <div class="wrap">
+    <div class="section-tag reveal">// measured on real hardware</div>
+    <h2 class="h2 reveal">CPU mock mode vs. the actual NPU</h2>
+    <p class="lead reveal">Numbers from a live IMX477 camera feed, not synthetic frames. Switch views to compare throughput, latency, and how often Re-ID actually runs per tracked person.</p>
+
+    <div class="chart-card reveal">
+      <div class="chart-tabs">
+        <button class="chart-tab active" data-metric="throughput" onclick="setMetric('throughput', this)">Throughput</button>
+        <button class="chart-tab" data-metric="latency" onclick="setMetric('latency', this)">Latency</button>
+      </div>
+      <div class="chart-canvas-wrap"><canvas id="bench-chart"></canvas></div>
+    </div>
+  </div>
+</section>
+
+<section id="stack">
+  <div class="wrap">
+    <div class="section-tag reveal">// what it's built on</div>
+    <h2 class="h2 reveal">The stack</h2>
+    <p class="lead reveal">Every piece chosen for a constrained device — no component assumes a GPU, a cloud endpoint, or unlimited CPU headroom.</p>
+    <div class="stack-grid reveal">
+      <div class="stack-card"><div class="si"><i class="ti ti-cpu" aria-hidden="true"></i></div><div class="st">Hailo-8L NPU</div><div class="sd">26 TOPS, Round Robin scheduler shares one physical device across two models</div></div>
+      <div class="stack-card"><div class="si"><i class="ti ti-camera" aria-hidden="true"></i></div><div class="st">picamera2</div><div class="sd">IMX477 in video-mode configuration, tuned for throughput over preview quality</div></div>
+      <div class="stack-card"><div class="si"><i class="ti ti-server-2" aria-hidden="true"></i></div><div class="st">Flask + SSE</div><div class="sd">MJPEG video feed and live event stream, no polling</div></div>
+      <div class="stack-card"><div class="si"><i class="ti ti-database" aria-hidden="true"></i></div><div class="st">SQLite (WAL)</div><div class="sd">Indexed stats queries, safe concurrent reads during writes</div></div>
+      <div class="stack-card"><div class="si"><i class="ti ti-send" aria-hidden="true"></i></div><div class="st">Telegram bot</div><div class="sd">Per-zone cooldown, async dispatch so a slow network call never blocks the camera</div></div>
+      <div class="stack-card"><div class="si"><i class="ti ti-test-pipe" aria-hidden="true"></i></div><div class="st">pytest + CI</div><div class="sd">44 hardware-free tests run on every push</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="limits">
+  <div class="wrap">
+    <div class="section-tag reveal">// stated plainly</div>
+    <h2 class="h2 reveal">Known limitations</h2>
+    <p class="lead reveal">Overclaiming undermines a project meant to demonstrate engineering judgment, not just feature count.</p>
+    <div class="limits-grid reveal">
+      <div class="limit-card">
+        <div class="lh"><i class="ti ti-alert-triangle" aria-hidden="true"></i> Not anti-spoofing hardware</div>
+        <p>The liveness check is a motion heuristic. It catches a held-up photo or phone screen but won't reliably catch a tripod-mounted photo or a sophisticated replay attack — real liveness detection needs depth or IR sensing this Pi doesn't have.</p>
+      </div>
+      <div class="limit-card">
+        <div class="lh"><i class="ti ti-alert-triangle" aria-hidden="true"></i> Enrollment quality matters</div>
+        <p>A single low-quality enrollment photo measurably hurts Re-ID match confidence. Multi-photo enrollment from the dashboard exists specifically to mitigate this, not eliminate it.</p>
+      </div>
+      <div class="limit-card">
+        <div class="lh"><i class="ti ti-alert-triangle" aria-hidden="true"></i> Dev server, not production WSGI</div>
+        <p>Flask's built-in server is adequate at this scale — one camera, a handful of viewers — but a heavier deployment would warrant Gunicorn with gevent workers for concurrent MJPEG and SSE streaming.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>Built on HailoRT, Ultralytics YOLOv8, OSNet, and the Hailo Model Zoo.</p>
+    <p style="margin-top:0.6rem;">
+      <a href="https://github.com/Olawalekaybee/Pi5_IoT_security_camera" target="_blank" rel="noopener">GitHub</a>
+      <a href="#pipeline">Pipeline</a>
+      <a href="#benchmarks">Benchmarks</a>
+    </p>
+  </div>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+<script>
+var stages = [
+  { icon: 'ti-camera', title: 'Camera capture', sub: 'IMX477, 640x480', body: 'Frame captured via picamera2 in video-mode configuration. Switching from preview-mode config to video-mode cut capture latency from roughly 65ms to under 10ms per frame on this hardware.' },
+  { icon: 'ti-scan', title: 'YOLOv8 detection', sub: 'On-chip NMS', body: 'Person detection runs on the Hailo-8L NPU with on-chip non-max suppression. Measured at 11.9ms average latency and 75.1fps throughput on real camera input.' },
+  { icon: 'ti-fingerprint', title: 'OSNet Re-ID', sub: '512-dim embedding', body: 'Detected person crops are embedded into a 512-dimensional vector and matched against the enrolled gallery via cosine similarity. Throttled to roughly 2.5 calls per second per tracked person rather than every frame, which was the direct fix for visible video stutter under load.' },
+  { icon: 'ti-activity', title: 'Liveness check', sub: 'Motion heuristic', body: 'Bounding-box motion is tracked per identity across samples. A recognized match whose box stays suspiciously static gets flagged as a possible photo or screen spoof, even if the face genuinely matches the gallery.' },
+  { icon: 'ti-map-pin', title: 'Zone & dispatch', sub: 'Polygon match', body: 'The detection center is checked against configured restricted-zone polygons. A qualifying event is logged to SQLite, optionally sent to Telegram with cooldown, and pushed to the dashboard via Server-Sent Events.' }
+];
+
+function renderPipeline() {
+  var rail = document.getElementById('pipe-rail');
+  stages.forEach(function(s, i) {
+    var node = document.createElement('div');
+    node.className = 'pipe-node' + (i === 0 ? ' active' : '');
+    node.id = 'pn-' + i;
+    node.onclick = function() { selectStage(i); };
+    node.innerHTML = '<div class="pn-icon" style="background:var(--cyan-dim); color:var(--cyan);"><i class="ti ' + s.icon + '" aria-hidden="true"></i></div>' +
+      '<div class="pn-title">' + s.title + '</div><div class="pn-sub">' + s.sub + '</div>';
+    rail.appendChild(node);
+    if (i < stages.length - 1) {
+      var arrow = document.createElement('div');
+      arrow.className = 'pipe-arrow';
+      arrow.innerHTML = '<i class="ti ti-arrow-right" aria-hidden="true"></i>';
+      rail.appendChild(arrow);
+    }
+  });
+  selectStage(0);
+}
+
+function selectStage(i) {
+  document.querySelectorAll('.pipe-node').forEach(function(n) { n.classList.remove('active'); });
+  document.getElementById('pn-' + i).classList.add('active');
+  var s = stages[i];
+  document.getElementById('pipe-detail').innerHTML =
+    '<div class="pd-title"><i class="ti ' + s.icon + '" style="color:var(--cyan);" aria-hidden="true"></i>' + s.title + '</div>' + s.body;
+}
+
+var feedState = { running: false, boxes: [], events: [], totals: { total: 0, alerts: 0, spoof: 0 } };
+var feedNames = ['olawale', 'bella', 'unknown', 'unknown'];
+var feedColors = { ok: '#4ade80', unk: '#fb7185', spoof: '#fbbf24' };
+var feedInterval = null;
+
+function spawnBox() {
+  var inZoneB = Math.random() > 0.5;
+  var x = inZoneB ? 175 + Math.random() * 95 : 15 + Math.random() * 95;
+  var y = 50 + Math.random() * 110;
+  var name = feedNames[Math.floor(Math.random() * feedNames.length)];
+  var status = name === 'unknown' ? 'unk' : (Math.random() < 0.18 ? 'spoof' : 'ok');
+  return { x: x, y: y, w: 58, h: 86, name: name, status: status, zone: x > 160 ? 'zone_b' : 'zone_a', life: 0 };
+}
+
+function renderFeed() {
+  var g = document.getElementById('box-group');
+  var svgNS = 'http://www.w3.org/2000/svg';
+  while (g.firstChild) g.removeChild(g.firstChild);
+  feedState.boxes.forEach(function(b) {
+    var color = feedColors[b.status];
+    var rect = document.createElementNS(svgNS, 'rect');
+    rect.setAttribute('x', b.x); rect.setAttribute('y', b.y);
+    rect.setAttribute('width', b.w); rect.setAttribute('height', b.h);
+    rect.setAttribute('fill', 'none'); rect.setAttribute('stroke', color); rect.setAttribute('stroke-width', '2');
+    rect.setAttribute('rx', '2');
+    g.appendChild(rect);
+    var labelBg = document.createElementNS(svgNS, 'rect');
+    var labelText = b.status === 'spoof' ? b.name + ' SPOOF?' : (b.name + ' ' + (b.status === 'unk' ? '' : Math.round(70 + Math.random() * 25) + '%'));
+    labelBg.setAttribute('x', b.x); labelBg.setAttribute('y', b.y - 14);
+    labelBg.setAttribute('width', labelText.length * 5.4 + 6); labelBg.setAttribute('height', 13);
+    labelBg.setAttribute('fill', color);
+    g.appendChild(labelBg);
+    var label = document.createElementNS(svgNS, 'text');
+    label.setAttribute('x', b.x + 3); label.setAttribute('y', b.y - 4);
+    label.setAttribute('fill', '#08101c'); label.setAttribute('font-size', '9'); label.setAttribute('font-family', 'monospace'); label.setAttribute('font-weight', 'bold');
+    label.textContent = labelText;
+    g.appendChild(label);
+  });
+}
+
+function addEventRow(b) {
+  feedState.totals.total++;
+  if (b.status === 'unk') feedState.totals.alerts++;
+  if (b.status === 'spoof') feedState.totals.spoof++;
+  document.getElementById('stat-total').textContent = feedState.totals.total;
+  document.getElementById('stat-alerts').textContent = feedState.totals.alerts;
+  document.getElementById('stat-spoof').textContent = feedState.totals.spoof;
+
+  var tbody = document.getElementById('event-rows');
+  var tr = document.createElement('tr');
+  var time = new Date().toLocaleTimeString();
+  var statusText = b.status === 'spoof' ? 'SPOOF?' : (b.status === 'unk' ? 'ALERTED' : 'logged');
+  var statusColor = b.status === 'spoof' ? '#fbbf24' : (b.status === 'unk' ? '#fb7185' : '#4ade80');
+  tr.innerHTML = '<td>' + time + '</td><td>' + b.zone + '</td><td style="color:var(--text);">' + b.name + '</td><td style="color:' + statusColor + '; font-weight:600;">' + statusText + '</td>';
+  tbody.insertBefore(tr, tbody.firstChild);
+  while (tbody.children.length > 7) tbody.removeChild(tbody.lastChild);
+}
+
+function togglePlay() {
+  var btn = document.getElementById('play-btn');
+  if (feedState.running) {
+    clearInterval(feedInterval);
+    feedState.running = false;
+    btn.innerHTML = '<i class="ti ti-player-play" aria-hidden="true"></i> Simulate';
+  } else {
+    feedState.running = true;
+    btn.innerHTML = '<i class="ti ti-player-pause" aria-hidden="true"></i> Pause';
+    feedInterval = setInterval(function() {
+      if (feedState.boxes.length < 2 && Math.random() < 0.45) {
+        var nb = spawnBox();
+        feedState.boxes.push(nb);
+        addEventRow(nb);
+      }
+      feedState.boxes.forEach(function(b) { b.life++; });
+      feedState.boxes = feedState.boxes.filter(function(b) { return b.life < 12; });
+      renderFeed();
+    }, 650);
+  }
+}
+
+function resetFeed() {
+  if (feedState.running) togglePlay();
+  feedState.boxes = [];
+  feedState.totals = { total: 0, alerts: 0, spoof: 0 };
+  document.getElementById('stat-total').textContent = '0';
+  document.getElementById('stat-alerts').textContent = '0';
+  document.getElementById('stat-spoof').textContent = '0';
+  document.getElementById('event-rows').innerHTML = '';
+  renderFeed();
+}
+
+var benchChart = null;
+var benchData = {
+  throughput: { labels: ['CPU mock', 'Hailo-8L NPU'], values: [14, 75.1], unit: 'fps' },
+  latency: { labels: ['CPU mock', 'Hailo-8L NPU'], values: [70, 11.9], unit: 'ms' }
+};
+
+function setMetric(metric, btn) {
+  document.querySelectorAll('.chart-tab').forEach(function(t) { t.classList.remove('active'); });
+  btn.classList.add('active');
+  var d = benchData[metric];
+  benchChart.data.labels = d.labels;
+  benchChart.data.datasets[0].data = d.values;
+  benchChart.data.datasets[0].label = metric === 'throughput' ? 'Frames per second' : 'Milliseconds per frame';
+  benchChart.update();
+}
+
+function initChart() {
+  var ctx = document.getElementById('bench-chart');
+  benchChart = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: benchData.throughput.labels,
+      datasets: [{
+        label: 'Frames per second',
+        data: benchData.throughput.values,
+        backgroundColor: ['#3a3f48', '#4ee3f0'],
+        borderRadius: 6,
+        maxBarThickness: 90
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false }, tooltip: { backgroundColor: '#11141a', titleColor: '#eef0f3', bodyColor: '#aab0bb', borderColor: '#20242c', borderWidth: 1, padding: 10 } },
+      scales: {
+        x: { ticks: { color: '#aab0bb', font: { size: 13, family: 'Inter' } }, grid: { display: false }, border: { color: '#20242c' } },
+        y: { ticks: { color: '#7d838f', font: { size: 11, family: 'JetBrains Mono' } }, grid: { color: '#171b22' }, border: { color: '#20242c' } }
+      }
+    }
+  });
+}
+
+function initReveal() {
+  if (!('IntersectionObserver' in window)) return;
+  var els = document.querySelectorAll('.reveal');
+  els.forEach(function(el) { el.classList.add('pending'); });
+  var obs = new IntersectionObserver(function(entries) {
+    entries.forEach(function(e) {
+      if (e.isIntersecting) { e.target.classList.add('in'); obs.unobserve(e.target); }
+    });
+  }, { threshold: 0.1 });
+  els.forEach(function(el) { obs.observe(el); });
+  setTimeout(function() {
+    els.forEach(function(el) { el.classList.add('in'); });
+  }, 4000);
+}
+
+renderPipeline();
+initChart();
+initReveal();
+</script>
+</body>
+</html>
