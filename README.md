@@ -1,6 +1,6 @@
 # Edge AI Security Monitor
 
-Real-time, fully offline person detection and re-identification system powered by the Hailo-8L NPU on a Raspberry Pi 5. No cloud, no subscription, no internet dependency for inference — every frame is processed on-device.
+Real-time, fully offline person detection and re-identification system powered by the Hailo-8L NPU on a Raspberry Pi 5. No cloud, no subscription, no internet dependency for inference, every frame is processed on-device.
 
 [![CI](https://github.com/Olawalekaybee/Pi5_IoT_security_camera/actions/workflows/ci.yml/badge.svg)](https://github.com/Olawalekaybee/Pi5_IoT_security_camera/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -8,12 +8,12 @@ Real-time, fully offline person detection and re-identification system powered b
 [![Tests: 44 passing](https://img.shields.io/badge/tests-44%20passing-brightgreen.svg)](tests/)
 
 ---
-
+**[→ View the interactive project showcase](https://olawalekaybee.github.io/Pi5_IoT_security_camera/showcase.html)**
 ## Overview
 
-This project turns a Raspberry Pi 5 and a Hailo-8L AI HAT+ into a self-contained security appliance. A dual-model pipeline runs on the NPU: YOLOv8 for person detection and an OSNet re-identification model for recognizing specific individuals across frames and zones. When someone enters a restricted zone and isn't recognized as a known person — or is recognized but a motion-based liveness check flags the match as suspiciously static — the system fires a Telegram alert, logs the event to a local database, and updates a live web dashboard with an annotated video feed, all without sending a single frame off the device.
+This project turns a Raspberry Pi 5 and a Hailo-8L AI HAT+ into a self-contained security appliance. A dual-model pipeline runs on the NPU: YOLOv8 for person detection and an OSNet re-identification model for recognizing specific individuals across frames and zones. When someone enters a restricted zone and isn't recognized as a known person  or is recognized but a motion-based liveness check flags the match as suspiciously static, the system fires a Telegram alert, logs the event to a local database, and updates a live web dashboard with an annotated video feed, all without sending a single frame off the device.
 
-It was built to demonstrate real embedded AI engineering against real hardware constraints: a single physical NPU shared between two models, a CPU that has to keep up with detection, re-identification, and video encoding all at once, and the debugging that real deployments actually require — not a notebook demo.
+It was built to demonstrate real embedded AI engineering against real hardware constraints: a single physical NPU shared between two models, a CPU that has to keep up with detection, re-identification, and video encoding all at once, and the debugging that real deployments actually require not a notebook demo.
 
 ## In action
 
@@ -21,15 +21,15 @@ It was built to demonstrate real embedded AI engineering against real hardware c
 |---|---|
 | ![Hailo-8L HAT and Pi Camera Module wired to the Raspberry Pi 5](docs/images/hardware.jpeg) | ![Live dashboard showing annotated video feed and event log](docs/images/setup.jpeg) |
 
-The dashboard screenshot above is from a live session: real-time detection boxes on the video feed, the recent-events table updating via Server-Sent Events, and the in-browser enrollment panel — all running on the hardware pictured.
+The dashboard screenshot above is from a live session: real-time detection boxes on the video feed, the recent-events table updating via Server-Sent Events, and the in-browser enrollment panel, all running on the hardware pictured.
 
 ## Why this exists
 
 Most computer vision portfolio projects run on a laptop GPU or a cloud API and stop at "it detects objects." This project goes further in a few specific ways:
 
-- **Real edge hardware, real constraints.** Inference runs on a 26 TOPS NPU drawing under 5W. Getting two models to share one physical Hailo device required HailoRT's Round Robin scheduler — a real driver-level problem, not a config tweak.
+- **Real edge hardware, real constraints.** Inference runs on a 26 TOPS NPU drawing under 5W. Getting two models to share one physical Hailo device required HailoRT's Round Robin scheduler: a real driver-level problem, not a config tweak.
 - **Two models, one pipeline, throttled deliberately.** Detection and re-identification both run on-device. Re-ID is throttled per tracked person (rather than re-run on every camera frame) after profiling showed naive per-frame inference was the direct cause of visible video stutter under load.
-- **A motion-based liveness heuristic.** Recognizing a face isn't the same as confirming a live person — holding up a photo of an enrolled person fools plain Re-ID matching. A lightweight heuristic tracks per-person bounding-box motion and flags matches that look suspiciously static, with the limitations of that approach documented honestly in the code rather than oversold.
+- **A motion-based liveness heuristic.** Recognizing a face isn't the same as confirming a live person holding up a photo of an enrolled person fools plain Re-ID matching. A lightweight heuristic tracks per-person bounding-box motion and flags matches that look suspiciously static, with the limitations of that approach documented honestly in the code rather than oversold.
 - **An in-dashboard enrollment workflow.** Enroll a new known person directly from the live feed — capture several photos from the dashboard, and their embeddings are averaged for a more robust reference than a single photo.
 - **Shipped like production software.** Docker, systemd, CI, and 44 hardware-free unit tests — not just a `main.py`.
 
@@ -79,7 +79,7 @@ Most computer vision portfolio projects run on a laptop GPU or a cloud API and s
 | Storage | microSD card |
 | Power | Official Pi 5 USB-C supply |
 
-No Hailo hardware? Both `HailoInferenceEngine` and the Re-ID engine transparently fall back to a CPU mock mode that produces synthetic detections, so the full pipeline — zones, throttling, liveness, alerting, dashboard — can be exercised and tested without owning a HAT.
+No Hailo hardware? Both `HailoInferenceEngine` and the Re-ID engine transparently fall back to a CPU mock mode that produces synthetic detections, so the full pipeline — zones, throttling, liveness, alerting, dashboard can be exercised and tested without owning a HAT.
 
 ## Quick start
 
@@ -105,7 +105,7 @@ Edit `config/settings.yaml` with your model paths, Telegram credentials, and zon
 python3 main.py --config config/settings.yaml
 ```
 
-Add `--no-alerts` to disable Telegram while testing, or `--no-dashboard` to skip the web UI. Add `--benchmark` to run a 30-second FPS/latency benchmark instead of the full pipeline.
+Add `--no-alerts` to disable Telegram while testing, or `--no-dashboard` to skip the web UI. Add `--benchmark` to run a 30 seconds FPS/latency benchmark instead of the full pipeline.
 
 The dashboard is available at `http://<device-ip>:5000`.
 
