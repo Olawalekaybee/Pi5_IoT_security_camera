@@ -8,7 +8,7 @@ Real-time, fully offline person detection and re-identification system powered b
 [![Tests: 44 passing](https://img.shields.io/badge/tests-44%20passing-brightgreen.svg)](tests/)
 
 ---
-**[→ View the interactive project showcase](https://olawalekaybee.github.io/Pi5_IoT_security_camera/showcase.html)**
+**[→ View the interactive project showcase](https://olawalekaybee.github.io/Pi5_IoT_security_camera/)**
 ## Overview
 
 This project turns a Raspberry Pi 5 and a Hailo-8L AI HAT+ into a self-contained security appliance. A dual-model pipeline runs on the NPU: YOLOv8 for person detection and an OSNet re-identification model for recognizing specific individuals across frames and zones. When someone enters a restricted zone and isn't recognized as a known person  or is recognized but a motion-based liveness check flags the match as suspiciously static, the system fires a Telegram alert, logs the event to a local database, and updates a live web dashboard with an annotated video feed, all without sending a single frame off the device.
